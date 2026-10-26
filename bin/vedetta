@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  vedetta :: controller
+#
+#    vedetta start | stop | restart | toggle | status
+#    vedetta size <7-20 | + | ->      resize the whole widget
+#    vedetta save-pos                 remember current drag position
+#    vedetta watch                    keep position in sync (systemd user svc)
+#    vedetta test                     print the data block outside conky
+#
+#  Drag: hold ALT and drag with the left mouse button (XFCE default).
+#  Position is saved automatically by `watch`.
+# ============================================================================
+set -u
+
+BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONF="$BASE/conky.conf"
+STATE="$BASE/state.lua"
+COLLECT="$BASE/bin/collect.sh"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/vedetta"
+LOG="$CACHE/conky.log"
+PIDFILE="$CACHE/pid"
+mkdir -p "$CACHE"
+
+SCALE=10 GAPX=26 GAPY=56 ALIGN=top_right TINT=183
+
+read_state() {
+  local v
+  v=$(sed -n 's/^ *scale *= *\([0-9]\{1,2\}\).*/\1/p' "$STATE" 2>/dev/null | head -1)
+  [[ -n $v ]] && SCALE=$v
+  v=$(sed -n 's/^ *gapx *= *\([0-9]\{1,4\}\).*/\1/p' "$STATE" 2>/dev/null | head -1)
+  [[ -n $v ]] && GAPX=$v
+  v=$(sed -n 's/^ *gapy *= *\([0-9]\{1,4\}\).*/\1/p' "$STATE" 2>/dev/null | head -1)
+  [[ -n $v ]] && GAPY=$v
+  v=$(sed -n 's/^ *align *= *"\([a-z_]*\)".*/\1/p' "$STATE" 2>/dev/null | head -1)
+  [[ -n $v ]] && ALIGN=$v
+  v=$(sed -n 's/^ *tint *= *\([0-9]\{1,3\}\).*/\1/p' "$STATE" 2>/dev/null | head -1)
+  [[ -n $v ]] && TINT=$v
+}
+
+write_state() {
+  cat > "$STATE" <<EOF
+return {
+  scale = $SCALE,
+  gapx  = $GAPX,
+  gapy  = $GAPY,
+  align = "$ALIGN",
+  tint  = $TINT,
+}
+EOF
+}
+
+# every conky process that belongs to this widget, whatever path it was launched with
+all_pids() {
+  local p cmd
+  for p in $(pgrep -x conky 2>/dev/null); do
+    cmd=$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null) || continue
+    case $cmd in
+      *"vedetta/conky.conf"*|*"$CONF"*|*"sda-panel/conky.conf"*) printf '%s ' "$p" ;;
+    esac
+  done
+}
+conky_pid() { all_pids | awk '{print $1}'; }
+running()  { [[ -n $(conky_pid) ]]; }
+
+do_start() {
+  if running; then echo "already running (pid $(conky_pid))"; return 0; fi
+  [[ -x $COLLECT ]] || { echo "collector missing: $COLLECT"; return 1; }
+  setsid conky -c "$CONF" >"$LOG" 2>&1 < /dev/null &
+  echo $! > "$PIDFILE"
+  sleep 1
+  if running; then
+    echo "started (pid $(conky_pid))"
+  else
+    echo "FAILED to start. log tail:"; tail -n 15 "$LOG"; return 1
+  fi
+}
+
+do_stop() {
+  local pids
+  pids=$(all_pids)
+  if [[ -z ${pids// /} ]]; then rm -f "$PIDFILE"; echo "not running"; return 0; fi
+  # shellcheck disable=SC2086
+  kill $pids 2>/dev/null
+  sleep 0.5
+  local still
+  still=$(all_pids)
+  [[ -n ${still// /} ]] && kill -9 $still 2>/dev/null
+  rm -f "$PIDFILE"
+  echo "stopped"
+}
+
+do_size() {
+  local arg=${1:-}
+  read_state
+  case $arg in
+    +) SCALE=$(( SCALE + 1 ));;
+    -) SCALE=$(( SCALE - 1 ));;
+    ''|[!0-9]*) echo "usage: vedetta size <7-20|+|->"; return 1;;
+    *) SCALE=$arg;;
+  esac
+  (( SCALE < 7 ))  && SCALE=7
+  (( SCALE > 20 )) && SCALE=20
+  write_state
+  echo "font size -> ${SCALE}pt"
+  do_stop >/dev/null; sleep 0.3; do_start
+}
+
+do_tint() {
+  local arg=${1:-}
+  [[ $arg =~ ^[0-9]{1,3}$ ]] || { echo "usage: vedetta tint <0-100>"; return 1; }
+  (( arg > 100 )) && arg=100
+  read_state
+  TINT=$(( arg * 255 / 100 ))
+  write_state
+  echo "tint -> ${arg}%"
+  do_stop >/dev/null; sleep 0.3; do_start
+}
+
+do_save_pos() {
+  local w X Y WIDTH HEIGHT sw sh
+  w=$(find_win)
+  if [[ -z $w ]]; then echo "widget window not found"; return 1; fi
+  eval "$(xdotool getwindowgeometry --shell "$w" 2>/dev/null)"
+  read -r sw sh < <(xdotool getdisplaygeometry)
+  if [[ -z ${X:-} || -z ${WIDTH:-} ]]; then echo "geometry unavailable"; return 1; fi
+  read_state
+  GAPX=$(( sw - X - WIDTH ))
+  GAPY=$Y
+  (( GAPX < 0 )) && GAPX=0
+  (( GAPY < 0 )) && GAPY=0
+  write_state
+  echo "position saved (gap_x=$GAPX gap_y=$GAPY)"
+}
+
+find_win() {
+  local w
+  w=$(xdotool search --name '^vedetta$' 2>/dev/null | head -1)
+  [[ -z $w ]] && w=$(xdotool search --class '^conky$' 2>/dev/null | head -1)
+  printf '%s' "$w"
+}
+
+do_watch() {
+  # Persist the position only when the *user* moved the widget.
+  # The WM nudges a freshly mapped window by a few pixels; a 16 px dead-zone
+  # keeps that settle-in offset from being written back as a new position.
+  local w X Y WIDTH HEIGHT sw sh ex ey
+  trap 'exit 0' TERM INT
+  while :; do
+    w=$(find_win)
+    if [[ -n $w ]]; then
+      eval "$(xdotool getwindowgeometry --shell "$w" 2>/dev/null)"
+      read -r sw sh < <(xdotool getdisplaygeometry 2>/dev/null)
+      read_state
+      ex=$(( sw - GAPX - WIDTH ))
+      ey=$GAPY
+      if (( X - ex > 16 || ex - X > 16 || Y - ey > 16 || ey - Y > 16 )); then
+        do_save_pos >/dev/null 2>&1
+      fi
+    fi
+    sleep 3
+  done
+}
+
+do_status() {
+  read_state
+  local w
+  w=$(find_win)
+  echo "conf      : $CONF"
+  echo "state     : scale=${SCALE}pt  gap_x=$GAPX  gap_y=$GAPY  tint=$(( TINT * 100 / 255 ))%"
+  if running; then
+    echo "process   : running (pid $(conky_pid))"
+  else
+    echo "process   : stopped"
+  fi
+  if [[ -n $w ]]; then
+    echo "window    : $(xdotool getwindowgeometry --shell "$w" | tr '\n' ' ')"
+  else
+    echo "window    : not mapped"
+  fi
+  [[ -f $LOG ]] && { echo "log tail  :"; tail -n 5 "$LOG"; }
+}
+
+case "${1:-}" in
+  start)    do_start;;
+  stop)     do_stop;;
+  restart)  do_stop; sleep 0.3; do_start;;
+  toggle)   if running; then do_stop; else do_start; fi;;
+  size)     do_size "${2:-}";;
+  save-pos) do_save_pos;;
+  watch)    do_watch;;
+  status)   do_status;;
+  tint)     do_tint "${2:-}";;
+  test)     bash "$COLLECT";;
+  *)
+    sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^#  \{0,1\}//'
+    ;;
+esac

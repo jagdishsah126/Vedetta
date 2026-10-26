@@ -1,0 +1,7 @@
+return {
+  scale = 10,
+  gapx  = 0,
+  gapy  = 306,
+  align = "top_right",
+  tint  = 183,
+}

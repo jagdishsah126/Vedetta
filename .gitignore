@@ -1,0 +1,18 @@
+# Runtime state — machine specific, never committed
+state.lua
+
+# Reference material (private screenshots, not part of the project)
+*.jpg
+*.jpeg
+*.png
+!docs/*.png
+
+# Editor / OS noise
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# Local scratch
+*.log
