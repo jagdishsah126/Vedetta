@@ -66,26 +66,45 @@ EOF
 say "✓ $AUTOSTART"
 
 section "4/5  position watcher (systemd --user)"
-mkdir -p "$(dirname "$UNIT")"
-cat > "$UNIT" <<EOF
-[Unit]
-Description=vedetta position watcher
-PartOf=graphical-session.target
-
-[Service]
-Type=simple
-Environment=DISPLAY=:0
-Environment=XAUTHORITY=%h/.Xauthority
-ExecStart=$DEST/bin/vedetta watch
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-EOF
-systemctl --user daemon-reload 2>/dev/null
-systemctl --user enable --now vedetta-watch.service 2>/dev/null \
-  && say "✓ watcher enabled" || say "! watcher not enabled (systemd --user unavailable)"
+if ! command -v xdotool >/dev/null 2>&1 || ! command -v xrandr >/dev/null 2>&1; then
+  say "! xdotool/xrandr missing — watcher not installed"
+  say "  the panel still works; run 'vedetta save-pos' after dragging it"
+  rm -f "$UNIT"
+  systemctl --user daemon-reload 2>/dev/null
+else
+  mkdir -p "$(dirname "$UNIT")"
+  env_display="${DISPLAY:-:0}"
+  env_xauth=""
+  # only point at an authority file that actually exists
+  [[ -r ${XAUTHORITY:-$HOME/.Xauthority} ]] && env_xauth="Environment=XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}"
+  {
+    echo '[Unit]'
+    echo 'Description=vedetta position watcher'
+    echo 'PartOf=graphical-session.target'
+    echo
+    echo '[Service]'
+    echo 'Type=simple'
+    echo "Environment=DISPLAY=$env_display"
+    [[ -n $env_xauth ]] && echo "$env_xauth"
+    echo "ExecStart=$DEST/bin/vedetta watch"
+    echo 'Restart=on-failure'
+    echo 'RestartSec=5'
+    echo
+    echo '[Install]'
+    echo 'WantedBy=default.target'
+  } > "$UNIT"
+  systemctl --user daemon-reload 2>/dev/null
+  if systemctl --user enable --now vedetta-watch.service 2>/dev/null; then
+    sleep 1
+    if systemctl --user is-active --quiet vedetta-watch.service; then
+      say "✓ watcher enabled and running (DISPLAY=$env_display)"
+    else
+      say "! watcher enabled but not running — position memory unavailable"
+    fi
+  else
+    say "! watcher not enabled (systemd --user unavailable)"
+  fi
+fi
 
 section "5/5  starting"
 "$DEST/bin/vedetta" restart

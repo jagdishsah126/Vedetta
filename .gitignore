@@ -6,6 +6,8 @@ state.lua
 *.jpeg
 *.png
 !docs/*.png
+!docs/*.jpg
+!docs/*.jpeg
 
 # Editor / OS noise
 *.swp

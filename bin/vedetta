@@ -144,6 +144,14 @@ do_watch() {
   # Persist the position only when the *user* moved the widget.
   # The WM nudges a freshly mapped window by a few pixels; a 16 px dead-zone
   # keeps that settle-in offset from being written back as a new position.
+  if ! command -v xdotool >/dev/null 2>&1; then
+    echo "watch: xdotool missing — position memory disabled" >&2
+    return 0
+  fi
+  if [[ -z ${DISPLAY:-} ]]; then
+    echo "watch: no DISPLAY — position memory disabled" >&2
+    return 0
+  fi
   local w X Y WIDTH HEIGHT sw sh ex ey
   trap 'exit 0' TERM INT
   while :; do

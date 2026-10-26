@@ -9,43 +9,7 @@ disk** — including the ones that are not mounted — and reports used, free an
 Built on [Conky](https://github.com/brndnmtthws/conky). Pure config + Bash: no daemon,
 no web UI, no telemetry, no network traffic.
 
-```
- ● VEDETTA ───────────────────────────────────────────
- workstation  ·  Linux Mint 22.3  ·  up 2h 38m
- Sat 24 Oct 2026   11:11
-
- CPU ────────────────────────────────────────────────
- 11th Gen Intel Core i5-1135G7 @ 2.40GHz  · powersave
- load 1.79 2.92 2.84  · 4099MHz
-   ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▃  22%
-   T1  24%   T2  24%   T3  19%   T4  24%
-
- MEMORY ─────────────────────────────────────────────
-   RAM  1.7G / 7.6G   ▬▬▬▬▬▬▬▬▬▬ 24%
-   SWAP 358.8M / 2.0G  ▬▬▬▬▬▬▬▬▬▬ 18%
-
- PC HEALTH ──────────────────────────────────────────
-   cpu 65°C cores 65/62°C fan 3687rpm
-   bat 61% Charging 12.4V
-
- SDA — DISKS ────────────────────────────────────────
- sda1  /boot/efi          vfat ● mounted
-   32.2M used 63.8M free 0B rsv  ▬▬▬▬▬▬▬▬▬▬  33%
-
- sda2  /home              ext4 ● mounted
-   9.3G used 37.1G free 2.5G rsv  ▬▬▬▬▬▬▬▬▬▬  20%
-
- sda3  /mnt/storage       ext4 ○ unmounted
-   39.5G size  — used  — free  — rsv
-
- sda4  /                ext4 ● mounted
-   16.0G used 17.4G free 1.8G rsv  ▬▬▬▬▬▬▬▬▬▬  47%
-   238.5G total  108.2G used  120.8G free
-   1.3M unallocated
-
- NETWORK ────────────────────────────────────────────
-   wlp0s20f3   ↓ 30.0K/s  ↑ 23.2K/s
-```
+![Vedetta on a Linux/XFCE desktop](docs/preview.jpg)
 
 ## Why another system monitor?
 
@@ -64,7 +28,10 @@ difference between "18 GB free" and the space you can actually write to.
 
 - **Per-partition disk table** — every partition of the target disk, mounted or not
 - **Used / free / reserved / percentage**, with a proportional gauge per partition
-- **Disk totals** — capacity, used, free, unallocated remainder
+- **Disk totals** — capacity, used, free, unallocated remainder, and an explicit
+  note when only mounted filesystems are counted
+- **Plain, LUKS, LVM and Btrfs layouts** — a filesystem mounted through a mapper
+  device is traced back to the partition it lives on
 - **CPU** — per-thread usage, average, 24-sample sparkline, frequency, load average
 - **Memory** — RAM and swap with gauges
 - **PC health** — package/core temperature, fan RPM, battery level, status and voltage
@@ -311,6 +278,51 @@ bash ~/.config/conky/vedetta/bin/collect.sh
 
 Whatever it prints is exactly what the panel shows — that is the debugging tool.
 
+<details>
+<summary>Sample output (plain text, colours stripped)</summary>
+
+```
+ ● VEDETTA ───────────────────────────────────────────
+ workstation  ·  Linux Mint 22.3  ·  up 2h 38m
+ Sat 24 Oct 2026   11:11
+
+ CPU ────────────────────────────────────────────────
+ 11th Gen Intel Core i5-1135G7 @ 2.40GHz  · powersave
+ load 1.79 2.92 2.84  · 4099MHz
+   ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▃  22%
+   T1  24%   T2  24%   T3  19%   T4  24%
+
+ MEMORY ─────────────────────────────────────────────
+   RAM  1.7G / 7.6G   ▬▬▬▬▬▬▬▬▬▬ 24%
+   SWAP 358.8M / 2.0G  ▬▬▬▬▬▬▬▬▬▬ 18%
+
+ PC HEALTH ──────────────────────────────────────────
+   cpu 65°C cores 65/62°C fan 3687rpm
+   bat 61% Charging 12.4V
+
+ SDA — DISKS ────────────────────────────────────────
+ sda1  /boot/efi          vfat ● mounted
+   32.2M used 63.8M free 0B rsv  ▬▬▬▬▬▬▬▬▬▬  33%
+
+ sda2  /home              ext4 ● mounted
+   9.3G used 37.1G free 2.5G rsv  ▬▬▬▬▬▬▬▬▬▬  20%
+
+ sda3  /mnt/storage       ext4 ○ unmounted
+   39.5G size  — used  — free  — rsv
+
+ sda4  /                  ext4 ● mounted
+   16.0G used 17.4G free 1.8G rsv  ▬▬▬▬▬▬▬▬▬▬  47%
+   238.5G disk  25.4G used  54.5G free
+   3 of 4 mounted — used/free cover mounted only
+   1.3M unallocated
+
+ NETWORK ────────────────────────────────────────────
+   wlp0s20f3   ↓ 30.0K/s  ↑ 23.2K/s
+```
+
+</details>
+
+
 | Section | Source |
 |---|---|
 | Partitions, sizes, filesystem types | `lsblk -b -P` |
@@ -328,6 +340,21 @@ a few dozen KB.
 
 **Reserved space** is exact for ext4 (the 5 % root reserve) and reads `0B` for NTFS and
 vfat, which have no equivalent. It is computed from `df`, so it needs no root.
+
+**Totals are honest about what they count.** `used` and `free` come from `df`, which
+only knows mounted filesystems, while `disk` is the physical capacity. When any
+partition is unmounted the summary says so, instead of letting a partial sum read as
+whole-disk usage:
+
+```
+   238.5G disk  26.3G used  53.6G free
+   3 of 5 mounted — used/free cover mounted only
+```
+
+**Partitions behind LUKS/LVM/RAID** mount as `/dev/mapper/...`, not as `/dev/sdaN`.
+Vedetta tries the direct device match first and only then walks the `lsblk` parent
+chain, so an encrypted or LVM filesystem is still attributed to its partition instead
+of appearing unmounted.
 
 ### Testing the unmounted path
 
@@ -366,6 +393,17 @@ panel clears the icon column, or turn desktop icons off in XFCE's desktop settin
 `systemctl --user status vedetta-watch.service` — it should be active. If it is, run
 `vedetta save-pos` once with the panel where you want it.
 
+**Position is not remembered, and the service is not active.**
+The watcher needs `xdotool` and `xrandr`, and it needs to know which X display to talk
+to. The installer writes the display it was run from into the unit, so install from
+inside the graphical session, not over SSH. Re-run `./install.sh` after installing
+`xdotool`/`xrandr`; without them the watcher is simply skipped and dragging still
+works, it just is not saved.
+
+**The disk totals look too small.**
+They are correct — see the `N of M mounted` line. `used` and `free` come from `df` and
+only cover mounted filesystems; `disk` is the physical capacity.
+
 **Temperatures show `n/a`.**
 Load the sensor modules: `sudo modprobe coretemp`, or run `sudo sensors-detect` once.
 
@@ -385,7 +423,9 @@ The field is skipped when unavailable.
 │   ├── collect.sh        renders the whole panel
 │   ├── lib.sh            palette, thresholds, gauges, byte formatting
 │   └── vedetta           controller (start/stop/size/tint/save-pos/watch)
-├── docs/DESIGN.md        design notes and decisions
+├── docs/
+│   ├── DESIGN.md         design notes and decisions
+│   └── preview.jpg       screenshot used in this README
 ├── install.sh
 ├── uninstall.sh
 ├── CREDITS.md            upstream sources and licences

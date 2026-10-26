@@ -99,7 +99,25 @@ A device found by `lsblk` but absent from `df` is rendered
 `○ unmounted` with its size and `—` for used/free. A device that disappears from
 both (disk unplugged) is not invented; the row simply goes away on the next refresh.
 
-### 4.2 Reserved space
+### 4.2 Mapping a filesystem back to its partition
+
+`df` reports the path the filesystem was mounted from. For an ordinary partition that
+is `/dev/sda2`; for LUKS, LVM or RAID it is `/dev/mapper/...`, which is **not** a
+partition on the disk. Matching only the literal device name would therefore mark a
+perfectly busy encrypted partition as unmounted.
+
+Resolution is two-step, and the common case costs nothing:
+
+1. `/dev/sdaN` → `sdaN`, if that name is in the `lsblk` partition list.
+2. otherwise `lsblk -lsn -o NAME <source>` walks up the parent chain and the first
+   name that *is* one of our partitions wins.
+
+`-l` matters: without it `lsblk -s` prints tree glyphs (`└─sda6`) that would never
+match. Sources that are not on this disk (`tmpfs`, `overlay`, another disk) fail both
+steps and are ignored. When several mounts share one device (Btrfs subvolumes) the
+first one is used, which keeps the panel stable across refreshes.
+
+### 4.3 Reserved space
 
 ext4 keeps 5 % of the filesystem out of reach of unprivileged writers. `df` shows
 it only implicitly — the gap between *free* and *available*:
@@ -112,7 +130,7 @@ This is exact for ext4 and needs **no root** (the authoritative number lives in
 `tune2fs -l`, which does). NTFS and vfat have no equivalent reserve, so the column
 correctly reads `0B` there rather than lying with a percentage.
 
-### 4.3 Gauge ratios
+### 4.4 Gauge ratios
 
 A partition's gauge is `used / (used + available)` — *how full is it for me* — which
 deliberately excludes the root reserve. That matches what the user can actually
@@ -121,11 +139,21 @@ write, and matches `df`'s `Use%`.
 `used + available` rather than `size` also keeps the maths correct on filesystems
 where metadata eats a few percent.
 
-### 4.4 Totals
+### 4.5 Totals
 
 The disk summary sums whatever partitions `lsblk` reports and subtracts the sum from
 the disk size, giving the unallocated tail. It is derived, never hard-coded, so it
 follows repartitioning automatically.
+
+`disk` is the physical capacity, but `used` and `free` come from `df`, so they only
+cover **mounted** filesystems. Presenting that partial sum as whole-disk usage would
+be a quiet lie, so the panel counts mounted partitions and adds a qualifier row only
+when the numbers are incomplete:
+
+```
+   238.5G disk  26.3G used  53.6G free
+   3 of 5 mounted — used/free cover mounted only
+```
 
 ---
 
@@ -202,6 +230,14 @@ Persisting that position is the one thing a static config cannot do. A small
   restart is never stored as a user drag;
 - writes are atomic (temp file + move), so a crash mid-write cannot corrupt state.
 
+The service needs to know **which** X display to inspect, so the installer records the
+`DISPLAY` it was run under rather than assuming `:0`, and only writes `XAUTHORITY`
+when that file actually exists — pointing `xdotool` at a nonexistent authority file
+fails silently. If `xdotool` or `xrandr` are missing the service is not installed at
+all, and `vedetta watch` exits cleanly (with `Restart=on-failure`, so systemd does not
+loop) rather than idling forever. Dragging still works in that mode; the position is
+just not remembered.
+
 ---
 
 ## 7. Health readings without privileges
@@ -264,12 +300,17 @@ Checklist used during development:
 
 - [ ] All partitions listed, each with mounted state, used, free, reserved
 - [ ] Faking an unmount flips the row to `○ unmounted` within one refresh, no crash
+- [ ] With anything unmounted, the `N of M mounted` qualifier appears and the totals
+      are never presented as whole-disk usage
 - [ ] Reserved matches `tune2fs` (block count × block size) on ext4, `0` on NTFS/vfat
+- [ ] A filesystem mounted from `/dev/mapper/...` is attributed to its partition, not
+      shown as unmounted
 - [ ] Temperatures match `sensors` within ±1 °C at the same instant
 - [ ] RAM matches `free -h`; swap matches `swapon --show`
 - [ ] Idle cost under 1 % of one core and under 20 MB RSS
 - [ ] Exactly one Conky process after repeated restarts
 - [ ] Survives logout/login, and `vedetta stop` really stops it
+- [ ] `uninstall.sh` stops only Vedetta's Conky, never another widget's
 
 ---
 

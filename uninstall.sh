@@ -12,7 +12,25 @@ rm -f "$HOME/.config/systemd/user/vedetta-watch.service"
 systemctl --user daemon-reload 2>/dev/null
 
 rm -f "$HOME/.config/autostart/vedetta.desktop"
-"$DEST/bin/vedetta" stop 2>/dev/null || pkill -x conky 2>/dev/null
+
+# Stop only this widget's Conky. `pkill -x conky` would take down every other
+# Conky widget on the machine, so the process is identified by its config path.
+# This also works when $DEST is already gone — the common reason to run this.
+CONF="$(readlink -f "$DEST" 2>/dev/null)/conky.conf"
+
+kill_vedetta() {          # $1 = signal
+  local p cmd
+  for p in $(pgrep -x conky 2>/dev/null); do
+    cmd=$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null) || continue
+    case $cmd in
+      *"$CONF"*|*/vedetta/conky.conf*) kill "-$1" "$p" 2>/dev/null ;;
+    esac
+  done
+}
+
+kill_vedetta 15
+sleep 0.5
+kill_vedetta 9 || true
 
 # only the symlink is removed; a real directory is left alone on purpose
 [[ -L $DEST ]] && rm -f "$DEST"

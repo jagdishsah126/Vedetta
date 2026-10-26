@@ -21,7 +21,8 @@ san() { printf '%s' "${1//\$/\$\$}"; }   # escape $ for conky's parser
 
 # =====================================================================  system
 rootdev=$(findmnt -no SOURCE / 2>/dev/null)
-host=$(san "$(cat /etc/hostname 2>/dev/null || echo unknown)")
+host=${VEDETTA_HOSTNAME:-$(cat /etc/hostname 2>/dev/null)}
+host=$(san "${host:-unknown}")
 NAME="" VERSION_ID=""
 . /etc/os-release 2>/dev/null
 distro="${NAME#Linux } ${VERSION_ID}"
@@ -138,9 +139,25 @@ while IFS= read -r line; do
 done < <(lsblk -b -P -o NAME,SIZE,TYPE,FSTYPE "$DISK" 2>/dev/null)
 
 declare -A M_TGT M_USED M_AVAIL M_SIZE
+
+# Resolve a df source to one of this disk's partitions.
+#   plain    : /dev/sda2            -> sda2
+#   LUKS/LVM : /dev/mapper/vg-root  -> sda6   (the partition it lives on,
+#                                             found by walking up lsblk -s)
+# Fails when the source is not part of the target disk.
+map_part() {
+  local src=$1 cand
+  cand=${src#/dev/}
+  [[ -n ${P_SIZE[$cand]:-} ]] && { printf '%s' "$cand"; return 0; }
+  [[ $src == /dev/* ]] || return 1
+  while read -r cand; do
+    [[ -n ${P_SIZE[$cand]:-} ]] && { printf '%s' "$cand"; return 0; }
+  done < <(lsblk -lsn -o NAME "$src" 2>/dev/null)
+  return 1
+}
+
 while read -r src fstype size used avail target; do
-  [[ $src == "/dev/$disk_name"* ]] || continue
-  k=${src#/dev/}
+  k=$(map_part "$src") || continue
   [[ -n ${M_TGT[$k]} ]] && continue
   M_TGT[$k]=$target; M_SIZE[$k]=$size; M_USED[$k]=$used; M_AVAIL[$k]=$avail
 done < <(df -B1 --output=source,fstype,size,used,avail,target 2>/dev/null | tail -n +2)
@@ -155,14 +172,16 @@ fi
 
 disk_size=$(lsblk -bno SIZE "$DISK" 2>/dev/null | head -1)
 disk_size=${disk_size:-0}
-sum_part=0; sum_used=0; sum_avail=0
+sum_part=0; sum_used=0; sum_avail=0; mounted_n=0
 for p in "${parts[@]}"; do
   sum_part=$(( sum_part + ${P_SIZE[$p]:-0} ))
   if [[ -n ${M_TGT[$p]} ]]; then
+    mounted_n=$(( mounted_n + 1 ))
     sum_used=$(( sum_used + ${M_USED[$p]:-0} ))
     sum_avail=$(( sum_avail + ${M_AVAIL[$p]:-0} ))
   fi
 done
+total_n=${#parts[@]}
 unalloc=$(( disk_size - sum_part )); (( unalloc < 0 )) && unalloc=0
 
 # =====================================================================  net
@@ -311,9 +330,15 @@ for p in "${parts[@]}"; do
   fi
   (( i_part++ < ${#parts[@]} - 1 )) && emit ""
 done
-printf '%s   %s%s total  %s%s used  %s%s free%s\n' \
+printf '%s   %s%s disk  %s%s used  %s%s free%s\n' \
   "$C_DIM" "$C_TEXT" "$(hcol "$disk_size")" "$C_TEXT" "$(hcol "$sum_used")" \
   "$C_TEXT" "$(hcol "$sum_avail")" "$C_DIM"
+# used/free come from df, so they only cover mounted filesystems. Say so rather
+# than letting a partial sum read as whole-disk usage.
+if (( mounted_n < total_n )); then
+  printf '%s   %s%d of %d mounted — used/free cover mounted only%s\n' \
+    "$C_DIM" "$C_DIM" "$mounted_n" "$total_n" "$C_DIM"
+fi
 if (( unalloc > 1048576 )); then
   printf '%s   %s%s unallocated%s\n' "$C_DIM" "$C_DIM" "$(hcol "$unalloc")" "$C_DIM"
 fi
