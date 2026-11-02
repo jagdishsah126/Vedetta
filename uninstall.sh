@@ -19,12 +19,18 @@ rm -f "$HOME/.config/autostart/vedetta.desktop"
 CONF="$(readlink -f "$DEST" 2>/dev/null)/conky.conf"
 
 kill_vedetta() {          # $1 = signal
-  local p cmd
+  local p a prev cand
   for p in $(pgrep -x conky 2>/dev/null); do
-    cmd=$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null) || continue
-    case $cmd in
-      *"$CONF"*|*/vedetta/conky.conf*) kill "-$1" "$p" 2>/dev/null ;;
-    esac
+    prev=; cand=
+    while IFS= read -r a; do
+      [[ $prev == -c ]] && { cand=$a; break; }
+      prev=$a
+    done < <(tr '\0' '\n' < "/proc/$p/cmdline" 2>/dev/null)
+    [[ -n ${cand:-} ]] || continue
+    if [[ $(readlink -f "$cand" 2>/dev/null) == "$CONF" ]] ||
+       { [[ -r $cand ]] && head -3 "$cand" | grep -q vedetta; }; then
+      kill "-$1" "$p" 2>/dev/null
+    fi
   done
 }
 

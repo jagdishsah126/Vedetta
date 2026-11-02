@@ -277,7 +277,12 @@ omitted rather than printed as a plausible-looking zero.
 | `test` | run the collector and print plain text |
 
 Process discovery reads `/proc/*/cmdline` rather than using `pgrep -f`, because
-Conky rewrites its own command line at startup and `-f` matching misses it. Stale
+Conky rewrites its own command line at startup and `-f` matching misses it. The `-c`
+argument is then **resolved** (`readlink -f`) before comparison, because the same file
+is reachable as `~/.config/conky/vedetta/conky.conf` and as the real deployment path —
+comparing strings would miss one of them and leave a ghost instance running. As a
+last resort the config file itself is inspected for the `vedetta` marker, so a widget
+started from an unrelated directory is still recognised. Stale
 instances are killed by PID before starting a new one — two overlapping Conky
 windows produce visible ghosting and was a real bug during development.
 

@@ -88,6 +88,23 @@ is the whole development loop — no copying files around.
 
 Autostart handles it. If it ever misses, `vedetta restart`.
 
+### Deploying to a fixed location
+
+Cloning and running `install.sh` in place means the widget keeps running from your
+working copy — edit a file, delete the folder, and the panel follows. If you would
+rather keep a stable runtime copy somewhere else and treat the clone as a dev repo:
+
+```bash
+./deploy.sh                        # copy to ~/Desktop/System Files/Vedetta and restart
+./deploy.sh /opt/vedetta           # or somewhere else
+./deploy.sh --install              # copy, then make that copy the active install
+```
+
+`deploy.sh` uses `rsync --delete`, so the target always matches the repository —
+except `state.lua`, which is excluded on purpose: the live position, size and tint
+belong to the deployment and survive every deploy. If the target is already the
+active install it is restarted; otherwise it tells you to run its `install.sh`.
+
 ---
 
 ## Uninstall
@@ -428,6 +445,7 @@ The field is skipped when unavailable.
 │   └── preview.jpg       screenshot used in this README
 ├── install.sh
 ├── uninstall.sh
+├── deploy.sh             copy this repo to a fixed runtime location
 ├── CREDITS.md            upstream sources and licences
 └── LICENSE               MIT
 ```

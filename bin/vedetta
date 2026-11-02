@@ -50,14 +50,23 @@ return {
 EOF
 }
 
-# every conky process that belongs to this widget, whatever path it was launched with
+# every conky process using this widget's config, however its path was spelled:
+# the same file is reached as ~/.config/conky/vedetta/conky.conf (symlink) and as
+# .../System Files/Vedetta/conky.conf (real path), so compare resolved paths.
 all_pids() {
-  local p cmd
+  local p conf a prev cand
+  conf=$(readlink -f "$CONF")
   for p in $(pgrep -x conky 2>/dev/null); do
-    cmd=$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null) || continue
-    case $cmd in
-      *"vedetta/conky.conf"*|*"$CONF"*|*"sda-panel/conky.conf"*) printf '%s ' "$p" ;;
-    esac
+    prev=; cand=
+    while IFS= read -r a; do
+      [[ $prev == -c ]] && { cand=$a; break; }
+      prev=$a
+    done < <(tr '\0' '\n' < "/proc/$p/cmdline" 2>/dev/null)
+    [[ -n ${cand:-} ]] || continue
+    if [[ $(readlink -f "$cand" 2>/dev/null) == "$conf" ]] ||
+       { [[ -r $cand ]] && head -3 "$cand" | grep -q vedetta; }; then
+      printf '%s ' "$p"
+    fi
   done
 }
 conky_pid() { all_pids | awk '{print $1}'; }
